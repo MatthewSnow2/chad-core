@@ -20,7 +20,7 @@ dependencies = [
     "sqlalchemy>=2.0.25",
     "alembic>=1.13.1",
     "asyncpg>=0.29.0",
-    "pgvector>=0.5.0",  # Required for HNSW support
+    "pgvector>=0.4.0",  # Vector extension support (0.4.1+ has HNSW)
 
     # Redis
     "redis>=5.0.1",
