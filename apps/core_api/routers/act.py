@@ -20,13 +20,15 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from apps.core_api.deps import get_current_user, get_redis, get_trace_id
+from apps.core_api.deps import get_current_user, get_redis, get_trace_id, get_settings
 from apps.core_api.auth import User
 from chad_obs.logging import get_logger
 from chad_agents.graphs.graph_langgraph import execute_agent_loop
 from chad_llm import LLMRouter
 from chad_tools.registry import ToolRegistry
 from chad_memory.stores import RedisStore
+from chad_agents.policies.policy_guard import PolicyGuard, ActRequest as PolicyActRequest, User as PolicyUser
+from apps.core_api.routers.approvals import create_pending_approval
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -126,6 +128,7 @@ async def execute_action(
     request: Request,
     user: User = Depends(get_current_user),
     trace_id: str = Depends(get_trace_id),
+    settings = Depends(get_settings),
 ) -> ActResponse:
     """
     Execute agent workflow with policy-driven execution.
@@ -214,21 +217,102 @@ async def execute_action(
     # ========================================================================
     # STEP 3: Policy Guard Validation
     # ========================================================================
-    # TODO: Import from chad_agents.policies.policy_guard
-    # from chad_agents.policies.policy_guard import policy_guard
-    # from chad_agents.policies.autonomy import AutonomyLevel
-    #
-    # try:
-    #     approved_plan, violations, redactions, autonomy_level = await policy_guard(
-    #         actor=actor,
-    #         goal=request_body.goal,
-    #         context=request_body.context
-    #     )
-    # except PolicyViolationError as e:
-    #     raise HTTPException(status_code=403, detail=str(e))
+    # Initialize policy guard
+    policy_guard = PolicyGuard(settings)
 
-    # Stub: Default autonomy level
-    autonomy_level = "L2_ExecuteNotify"
+    # Create policy request from API request
+    policy_request = PolicyActRequest(
+        actor=actor,
+        goal=request_body.goal,
+        context=request_body.context,
+        dry_run=request_body.dry_run,
+    )
+
+    # Create policy user from auth user
+    policy_user = PolicyUser(
+        user_id=user.user_id,
+        scopes=user.scopes,
+    )
+
+    # Validate request
+    validation = await policy_guard.validate_request(policy_request, policy_user)
+
+    # If not allowed, return 403 error
+    if not validation.allowed:
+        logger.warning(
+            "policy_violation",
+            actor=actor,
+            user_id=user.user_id,
+            reason=validation.reason,
+            missing_scopes=validation.missing_scopes,
+            trace_id=trace_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "policy_violation",
+                "reason": validation.reason,
+                "missing_scopes": validation.missing_scopes,
+                "required_scopes": validation.required_scopes,
+            },
+        )
+
+    # Extract autonomy level
+    autonomy_level = validation.autonomy_level.value
+
+    logger.info(
+        "policy_validation_passed",
+        actor=actor,
+        autonomy_level=autonomy_level,
+        risk_score=validation.risk_score,
+        requires_approval=validation.requires_approval,
+        trace_id=trace_id,
+    )
+
+    # ========================================================================
+    # STEP 3.5: Check if Approval is Required
+    # ========================================================================
+    if validation.requires_approval:
+        # Get Redis client
+        redis = await get_redis().__anext__()
+
+        # Create pending approval
+        await create_pending_approval(
+            redis=redis,
+            run_id=run_id,
+            actor=actor,
+            goal=request_body.goal,
+            autonomy_level=autonomy_level,
+            risk_score=validation.risk_score,
+            required_scopes=validation.required_scopes,
+            timeout_seconds=getattr(settings, "APPROVAL_TIMEOUT_SECONDS", 3600),
+        )
+
+        logger.info(
+            "approval_required",
+            run_id=run_id,
+            actor=actor,
+            autonomy_level=autonomy_level,
+            risk_score=validation.risk_score,
+            trace_id=trace_id,
+        )
+
+        # Return 202 Accepted with approval details
+        return ActResponse(
+            run_id=run_id,
+            trace_id=trace_id,
+            status="pending_approval",
+            message=f"Approval required for {autonomy_level}. Risk score: {validation.risk_score:.2f}",
+            autonomy_level=autonomy_level,
+            plan={
+                "risk_score": validation.risk_score,
+                "required_scopes": validation.required_scopes,
+                "reason": "High risk or sensitive operation requires manual approval",
+            },
+            results=None,
+            artifacts=None,
+            poll_url=f"/approvals/{run_id}/status",
+        )
 
     # ========================================================================
     # STEP 4: Reflex Router Check (Skip LLM for trivial goals)

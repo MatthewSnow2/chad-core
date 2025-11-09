@@ -149,6 +149,37 @@ class Settings(BaseSettings):
     )
 
     # ========================================================================
+    # POLICY GUARD & AUTONOMY
+    # ========================================================================
+    DEFAULT_AUTONOMY_LEVEL: str = Field(
+        default="L2_ExecuteNotify",
+        description="Default autonomy level if not determined by policy guard",
+        pattern="^(L0_Ask|L1_Draft|L2_ExecuteNotify|L3_ExecuteSilent)$",
+    )
+    RISK_THRESHOLD_L3: float = Field(
+        default=0.3,
+        description="Risk threshold for L3 (autonomous) operations",
+        ge=0.0,
+        le=1.0,
+    )
+    RISK_THRESHOLD_L2: float = Field(
+        default=0.6,
+        description="Risk threshold for L2 (confirmed) operations",
+        ge=0.0,
+        le=1.0,
+    )
+    RISK_THRESHOLD_L1: float = Field(
+        default=0.8,
+        description="Risk threshold for L1 (supervised) operations",
+        ge=0.0,
+        le=1.0,
+    )
+    APPROVAL_TIMEOUT_SECONDS: int = Field(
+        default=3600,
+        description="Timeout for pending approval requests (default: 1 hour)",
+    )
+
+    # ========================================================================
     # FEATURE FLAGS
     # ========================================================================
     FEATURE_LANGFUSE_ENABLED: bool = Field(default=False)

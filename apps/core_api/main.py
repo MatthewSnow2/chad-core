@@ -26,7 +26,7 @@ from chad_obs.logging import setup_logging
 from chad_obs.tracing import setup_tracing
 
 # Import routers
-from apps.core_api.routers import act, auth, health, metrics, runs
+from apps.core_api.routers import act, auth, health, metrics, runs, approvals
 
 # Initialize settings
 settings = Settings()
@@ -245,6 +245,9 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 
 # Core execution endpoint
 app.include_router(act.router, prefix="", tags=["execution"])
+
+# Approval workflow endpoints
+app.include_router(approvals.router, prefix="/approvals", tags=["approvals"])
 
 # Run viewer endpoints
 app.include_router(runs.router, prefix="/runs", tags=["runs"])
