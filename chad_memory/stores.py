@@ -471,39 +471,466 @@ class RedisStore:
 
 
 # ============================================================================
-# POSTGRES + PGVECTOR STORE (STUB)
+# POSTGRES STORE
+# ============================================================================
+
+
+class PostgresStore:
+    """Postgres storage for run history and execution details.
+
+    Stores:
+    - Runs (execution metadata)
+    - Steps (execution timeline)
+    - Artifacts (generated files)
+    - LLM calls (token usage, cost tracking)
+    """
+
+    def __init__(self, session_factory):
+        """Initialize Postgres store.
+
+        Args:
+            session_factory: async_sessionmaker instance
+        """
+        self.session_factory = session_factory
+
+    async def save_run(self, run_data: dict[str, Any]) -> str:
+        """Insert or update a run.
+
+        Args:
+            run_data: Run data dict with keys: id, actor, request_payload, status, etc.
+
+        Returns:
+            Run ID (UUID as string)
+        """
+        from uuid import UUID
+        from chad_memory.models import Run
+        from sqlalchemy import select
+
+        async with self.session_factory() as session:
+            run_id = run_data.get("id")
+
+            # Check if run exists
+            stmt = select(Run).where(Run.id == UUID(run_id) if isinstance(run_id, str) else run_id)
+            result = await session.execute(stmt)
+            existing_run = result.scalar_one_or_none()
+
+            if existing_run:
+                # Update existing run
+                for key, value in run_data.items():
+                    if hasattr(existing_run, key):
+                        setattr(existing_run, key, value)
+            else:
+                # Create new run
+                run = Run(**run_data)
+                session.add(run)
+
+            await session.commit()
+            return str(run_id)
+
+    async def get_run(self, run_id: str) -> dict[str, Any] | None:
+        """Retrieve a run by ID.
+
+        Args:
+            run_id: Run UUID
+
+        Returns:
+            Run data dict or None if not found
+        """
+        from uuid import UUID
+        from chad_memory.models import Run
+        from sqlalchemy import select
+
+        async with self.session_factory() as session:
+            stmt = select(Run).where(Run.id == UUID(run_id))
+            result = await session.execute(stmt)
+            run = result.scalar_one_or_none()
+
+            if not run:
+                return None
+
+            return {
+                "id": str(run.id),
+                "actor": run.actor,
+                "request_payload": run.request_payload,
+                "status": run.status,
+                "autonomy_level": run.autonomy_level,
+                "trace_id": run.trace_id,
+                "idempotency_key": run.idempotency_key,
+                "created_at": run.created_at.isoformat() if run.created_at else None,
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                "error_message": run.error_message,
+            }
+
+    async def list_runs(
+        self,
+        actor: str,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0
+    ) -> list[dict[str, Any]]:
+        """List runs for a user.
+
+        Args:
+            actor: User/actor identifier
+            status: Filter by status (optional)
+            limit: Max results
+            offset: Pagination offset
+
+        Returns:
+            List of run data dicts
+        """
+        from chad_memory.models import Run
+        from sqlalchemy import select, desc
+
+        async with self.session_factory() as session:
+            stmt = select(Run).where(Run.actor == actor)
+
+            if status:
+                stmt = stmt.where(Run.status == status)
+
+            stmt = stmt.order_by(desc(Run.created_at)).limit(limit).offset(offset)
+
+            result = await session.execute(stmt)
+            runs = result.scalars().all()
+
+            return [
+                {
+                    "id": str(run.id),
+                    "actor": run.actor,
+                    "request_payload": run.request_payload,
+                    "status": run.status,
+                    "autonomy_level": run.autonomy_level,
+                    "trace_id": run.trace_id,
+                    "created_at": run.created_at.isoformat() if run.created_at else None,
+                    "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                }
+                for run in runs
+            ]
+
+    async def count_runs(self, actor: str, status: str | None = None) -> int:
+        """Count total runs for a user.
+
+        Args:
+            actor: User/actor identifier
+            status: Filter by status (optional)
+
+        Returns:
+            Total count
+        """
+        from chad_memory.models import Run
+        from sqlalchemy import select, func
+
+        async with self.session_factory() as session:
+            stmt = select(func.count(Run.id)).where(Run.actor == actor)
+
+            if status:
+                stmt = stmt.where(Run.status == status)
+
+            result = await session.execute(stmt)
+            return result.scalar() or 0
+
+    async def save_step(self, step_data: dict[str, Any]) -> None:
+        """Insert a step record.
+
+        Args:
+            step_data: Step data dict
+        """
+        from chad_memory.models import Step
+
+        async with self.session_factory() as session:
+            step = Step(**step_data)
+            session.add(step)
+            await session.commit()
+
+    async def get_steps(self, run_id: str) -> list[dict[str, Any]]:
+        """Get all steps for a run.
+
+        Args:
+            run_id: Run UUID
+
+        Returns:
+            List of step data dicts in order
+        """
+        from uuid import UUID
+        from chad_memory.models import Step
+        from sqlalchemy import select
+
+        async with self.session_factory() as session:
+            stmt = select(Step).where(Step.run_id == UUID(run_id)).order_by(Step.step_number)
+            result = await session.execute(stmt)
+            steps = result.scalars().all()
+
+            return [
+                {
+                    "id": str(step.id),
+                    "run_id": str(step.run_id),
+                    "step_number": step.step_number,
+                    "node_name": step.node_name,
+                    "input_data": step.input_data,
+                    "output_data": step.output_data,
+                    "llm_call_id": step.llm_call_id,
+                    "started_at": step.started_at.isoformat() if step.started_at else None,
+                    "completed_at": step.completed_at.isoformat() if step.completed_at else None,
+                    "status": step.status,
+                    "error_message": step.error_message,
+                }
+                for step in steps
+            ]
+
+    async def save_artifact(self, artifact_data: dict[str, Any]) -> None:
+        """Insert an artifact record.
+
+        Args:
+            artifact_data: Artifact data dict
+        """
+        from chad_memory.models import Artifact
+
+        async with self.session_factory() as session:
+            artifact = Artifact(**artifact_data)
+            session.add(artifact)
+            await session.commit()
+
+    async def get_artifacts(self, run_id: str) -> list[dict[str, Any]]:
+        """Get all artifacts for a run.
+
+        Args:
+            run_id: Run UUID
+
+        Returns:
+            List of artifact data dicts
+        """
+        from uuid import UUID
+        from chad_memory.models import Artifact
+        from sqlalchemy import select
+
+        async with self.session_factory() as session:
+            stmt = select(Artifact).where(Artifact.run_id == UUID(run_id)).order_by(Artifact.created_at)
+            result = await session.execute(stmt)
+            artifacts = result.scalars().all()
+
+            return [
+                {
+                    "id": str(artifact.id),
+                    "run_id": str(artifact.run_id),
+                    "artifact_type": artifact.artifact_type,
+                    "url": artifact.url,
+                    "metadata_json": artifact.metadata_json,
+                    "created_at": artifact.created_at.isoformat() if artifact.created_at else None,
+                }
+                for artifact in artifacts
+            ]
+
+    async def save_llm_call(self, llm_call_data: dict[str, Any]) -> None:
+        """Insert an LLM call record.
+
+        Args:
+            llm_call_data: LLM call data dict
+        """
+        from chad_memory.models import LLMCall
+
+        async with self.session_factory() as session:
+            llm_call = LLMCall(**llm_call_data)
+            session.add(llm_call)
+            await session.commit()
+
+    async def get_run_stats(self, run_id: str) -> dict[str, Any]:
+        """Get aggregate stats for a run.
+
+        Args:
+            run_id: Run UUID
+
+        Returns:
+            Stats dict with token counts, cost, duration, etc.
+        """
+        from uuid import UUID
+        from datetime import datetime
+        from chad_memory.models import Run, LLMCall, Step
+        from sqlalchemy import select, func
+
+        async with self.session_factory() as session:
+            # Get run
+            run_stmt = select(Run).where(Run.id == UUID(run_id))
+            run_result = await session.execute(run_stmt)
+            run = run_result.scalar_one_or_none()
+
+            if not run:
+                return {}
+
+            # Aggregate LLM call stats
+            llm_stmt = select(
+                func.count(LLMCall.id).label("total_calls"),
+                func.sum(LLMCall.total_tokens).label("total_tokens"),
+                func.sum(LLMCall.prompt_tokens).label("prompt_tokens"),
+                func.sum(LLMCall.completion_tokens).label("completion_tokens"),
+            ).where(LLMCall.run_id == UUID(run_id))
+
+            llm_result = await session.execute(llm_stmt)
+            llm_stats = llm_result.one()
+
+            # Count steps
+            step_stmt = select(func.count(Step.id)).where(Step.run_id == UUID(run_id))
+            step_result = await session.execute(step_stmt)
+            step_count = step_result.scalar() or 0
+
+            # Calculate duration
+            duration_seconds = None
+            if run.created_at and run.completed_at:
+                duration_seconds = (run.completed_at - run.created_at).total_seconds()
+
+            return {
+                "run_id": str(run_id),
+                "status": run.status,
+                "step_count": step_count,
+                "llm_calls": llm_stats.total_calls or 0,
+                "total_tokens": llm_stats.total_tokens or 0,
+                "prompt_tokens": llm_stats.prompt_tokens or 0,
+                "completion_tokens": llm_stats.completion_tokens or 0,
+                "duration_seconds": duration_seconds,
+            }
+
+
+# ============================================================================
+# PGVECTOR STORE
 # ============================================================================
 
 
 class PgVectorStore:
-    """Postgres + pgvector for long-term memory and embeddings.
+    """Postgres + pgvector for semantic search.
 
     Stores:
-    - Completed run history
-    - Conversation embeddings for semantic search
-    - Tool usage analytics
-    - User preferences
-
-    TODO: Implement in Phase 4
+    - Text embeddings with metadata
+    - Supports cosine similarity search
     """
 
-    async def save_run(self, run: dict):
-        """Save completed run to Postgres.
+    def __init__(self, session_factory):
+        """Initialize PgVector store.
 
-        TODO: Implement Postgres storage
+        Args:
+            session_factory: async_sessionmaker instance
         """
-        pass
+        self.session_factory = session_factory
 
-    async def search_similar_runs(
+    async def add_embedding(
+        self,
+        content: str,
+        embedding: list[float],
+        metadata: dict[str, Any],
+        source_type: str,
+        source_id: str,
+        embedding_id: str | None = None
+    ) -> str:
+        """Insert an embedding.
+
+        Args:
+            content: Original text content
+            embedding: Vector embedding (list of floats)
+            metadata: Additional metadata (JSON)
+            source_type: Source type (e.g., "run", "artifact")
+            source_id: Source UUID
+            embedding_id: Optional UUID for the embedding
+
+        Returns:
+            Embedding ID (UUID as string)
+        """
+        from uuid import UUID, uuid4
+        from sqlalchemy import text
+
+        async with self.session_factory() as session:
+            embedding_uuid = UUID(embedding_id) if embedding_id else uuid4()
+
+            # Insert with raw SQL for vector type
+            stmt = text("""
+                INSERT INTO embeddings (id, content, embedding, metadata_json, source_type, source_id)
+                VALUES (:id, :content, :embedding::vector, :metadata::jsonb, :source_type, :source_id)
+            """)
+
+            await session.execute(
+                stmt,
+                {
+                    "id": embedding_uuid,
+                    "content": content,
+                    "embedding": str(embedding),  # pgvector accepts array format
+                    "metadata": json.dumps(metadata),
+                    "source_type": source_type,
+                    "source_id": UUID(source_id),
+                }
+            )
+            await session.commit()
+            return str(embedding_uuid)
+
+    async def search(
         self,
         query_embedding: list[float],
-        limit: int = 10
-    ) -> list[dict]:
-        """Search for similar runs using pgvector.
+        limit: int = 5,
+        metadata_filter: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
+        """Search for similar embeddings using cosine similarity.
 
-        TODO: Implement vector similarity search
+        Args:
+            query_embedding: Query vector
+            limit: Max results
+            metadata_filter: Optional metadata filters
+
+        Returns:
+            List of matching results with similarity scores
         """
-        return []
+        from sqlalchemy import text
+
+        async with self.session_factory() as session:
+            # Cosine similarity search using pgvector operator
+            stmt = text("""
+                SELECT
+                    id,
+                    content,
+                    metadata_json,
+                    source_type,
+                    source_id,
+                    1 - (embedding <=> :query_embedding::vector) as similarity
+                FROM embeddings
+                ORDER BY embedding <=> :query_embedding::vector
+                LIMIT :limit
+            """)
+
+            result = await session.execute(
+                stmt,
+                {
+                    "query_embedding": str(query_embedding),
+                    "limit": limit,
+                }
+            )
+
+            rows = result.fetchall()
+
+            return [
+                {
+                    "id": str(row[0]),
+                    "content": row[1],
+                    "metadata": row[2],
+                    "source_type": row[3],
+                    "source_id": str(row[4]),
+                    "similarity": float(row[5]),
+                }
+                for row in rows
+            ]
+
+    async def delete_by_source(self, source_id: str) -> int:
+        """Delete all embeddings for a source.
+
+        Args:
+            source_id: Source UUID
+
+        Returns:
+            Number of embeddings deleted
+        """
+        from uuid import UUID
+        from chad_memory.models import Embedding
+        from sqlalchemy import delete
+
+        async with self.session_factory() as session:
+            stmt = delete(Embedding).where(Embedding.source_id == UUID(source_id))
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount
 
 
 # ============================================================================
@@ -525,15 +952,31 @@ async def create_redis_store(redis_url: str) -> RedisStore:
     return store
 
 
-async def create_pg_vector_store(database_url: str) -> PgVectorStore:
+async def create_postgres_store(database_url: str = None) -> PostgresStore:
+    """Create Postgres store.
+
+    Args:
+        database_url: Database connection URL
+
+    Returns:
+        PostgresStore instance
+    """
+    from chad_memory.database import get_session_factory
+
+    session_factory = get_session_factory(database_url)
+    return PostgresStore(session_factory)
+
+
+async def create_pg_vector_store(database_url: str = None) -> PgVectorStore:
     """Create Postgres vector store.
 
     Args:
         database_url: Database connection URL
 
     Returns:
-        PgVectorStore (stub)
-
-    TODO: Implement Postgres connection
+        PgVectorStore instance
     """
-    return PgVectorStore()
+    from chad_memory.database import get_session_factory
+
+    session_factory = get_session_factory(database_url)
+    return PgVectorStore(session_factory)

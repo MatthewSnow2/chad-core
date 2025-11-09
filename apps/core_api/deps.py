@@ -36,30 +36,16 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     Yields:
         AsyncSession: SQLAlchemy async session
 
-    TODO: Implement async session factory
-    TODO: Add connection pool management
-    TODO: Add transaction rollback on exception
-    TODO: Add query logging in debug mode
-
     Example Usage:
         @app.get("/items")
         async def get_items(db: AsyncSession = Depends(get_db)):
             result = await db.execute(select(Item))
             return result.scalars().all()
     """
-    # TODO: Create async session from engine
-    # async with async_session_factory() as session:
-    #     try:
-    #         yield session
-    #         await session.commit()
-    #     except Exception:
-    #         await session.rollback()
-    #         raise
+    from chad_memory.database import get_db_session
 
-    # Placeholder: yield None for now
-    # This will fail if actually used, which is intentional (forces implementation)
-    raise NotImplementedError("Database dependency not yet implemented")
-    yield  # type: ignore
+    async for session in get_db_session():
+        yield session
 
 
 # ============================================================================
@@ -283,6 +269,49 @@ def get_settings() -> Settings:
             return {"environment": settings.ENVIRONMENT}
     """
     return settings
+
+
+# ============================================================================
+# STORE DEPENDENCIES
+# ============================================================================
+
+
+def get_postgres_store():
+    """
+    Dependency: PostgresStore instance.
+
+    Returns:
+        PostgresStore: Store instance with session factory
+
+    Example Usage:
+        @app.get("/runs")
+        async def list_runs(store = Depends(get_postgres_store)):
+            return await store.list_runs(actor="test")
+    """
+    from chad_memory.database import get_session_factory
+    from chad_memory.stores import PostgresStore
+
+    session_factory = get_session_factory()
+    return PostgresStore(session_factory)
+
+
+def get_vector_store():
+    """
+    Dependency: PgVectorStore instance.
+
+    Returns:
+        PgVectorStore: Vector store instance with session factory
+
+    Example Usage:
+        @app.post("/search")
+        async def search(embedding: list, store = Depends(get_vector_store)):
+            return await store.search(embedding, limit=10)
+    """
+    from chad_memory.database import get_session_factory
+    from chad_memory.stores import PgVectorStore
+
+    session_factory = get_session_factory()
+    return PgVectorStore(session_factory)
 
 
 # ============================================================================
