@@ -71,6 +71,19 @@ class RunStatsResponse(BaseModel):
     duration_seconds: float | None
 
 
+class RunStatusResponse(BaseModel):
+    """Real-time run status for polling."""
+
+    run_id: str
+    status: str
+    progress: int
+    current_step: str | None
+    created_at: str
+    completed_at: str | None
+    estimated_completion: str | None
+    error_message: str | None
+
+
 @router.get("", response_model=RunListResponse)
 async def list_runs(
     user: User = Depends(get_current_user),
@@ -237,3 +250,82 @@ async def get_run_stats(
         raise
     except Exception as e:
         raise HTTPException(500, f"Failed to get stats: {str(e)}")
+
+
+@router.get("/{run_id}/status", response_model=RunStatusResponse)
+async def get_run_status(
+    run_id: str,
+    user: User = Depends(get_current_user),
+    store = Depends(get_postgres_store),
+):
+    """
+    Get real-time run status for polling.
+
+    Returns current execution status including:
+    - Status (queued, running, completed, failed)
+    - Progress percentage (0-100)
+    - Current step being executed
+    - Estimated completion time (if available)
+
+    This endpoint is optimized for polling and returns quickly.
+    """
+    try:
+        actor = user.user_id  # Extract actor ID from authenticated user
+        # Get run
+        run = await store.get_run(run_id)
+
+        if not run:
+            raise HTTPException(404, "Run not found")
+
+        # Verify actor owns this run
+        if run["actor"] != actor:
+            raise HTTPException(403, "Access denied")
+
+        # Get steps to calculate progress
+        steps = await store.get_steps(run_id)
+        total_steps = len(steps)
+
+        # Calculate progress percentage
+        if run["status"] == "completed":
+            progress = 100
+        elif run["status"] == "failed":
+            progress = int((total_steps / 10) * 100) if total_steps > 0 else 0
+        elif run["status"] == "running":
+            # Estimate based on steps completed
+            progress = min(95, int((total_steps / 10) * 100))
+        elif run["status"] == "queued":
+            progress = 0
+        else:
+            progress = 0
+
+        # Get current step
+        current_step = None
+        if steps and run["status"] == "running":
+            # Get the last step
+            last_step = steps[-1]
+            current_step = last_step.get("node_name", "Unknown")
+
+        # Estimate completion time (simple heuristic: ~30s per step)
+        estimated_completion = None
+        if run["status"] == "running" and total_steps > 0:
+            from datetime import datetime, timedelta
+            remaining_steps = max(0, 10 - total_steps)
+            estimated_seconds = remaining_steps * 30
+            estimated_completion = (
+                datetime.utcnow() + timedelta(seconds=estimated_seconds)
+            ).isoformat()
+
+        return RunStatusResponse(
+            run_id=run_id,
+            status=run["status"],
+            progress=progress,
+            current_step=current_step,
+            created_at=run["created_at"],
+            completed_at=run["completed_at"],
+            estimated_completion=estimated_completion,
+            error_message=run.get("error_message"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get status: {str(e)}")

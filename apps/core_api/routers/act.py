@@ -18,9 +18,10 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from apps.core_api.deps import get_current_user, get_redis, get_trace_id, get_settings
+from apps.core_api.deps import get_current_user, get_redis, get_trace_id, get_settings, get_queue_producer, get_postgres_store
 from apps.core_api.auth import User
 from chad_obs.logging import get_logger
 from chad_agents.graphs.graph_langgraph import execute_agent_loop
@@ -29,6 +30,7 @@ from chad_tools.registry import ToolRegistry
 from chad_memory.stores import RedisStore
 from chad_agents.policies.policy_guard import PolicyGuard, ActRequest as PolicyActRequest, User as PolicyUser
 from apps.core_api.routers.approvals import create_pending_approval
+from chad_config.settings import Settings
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -129,6 +131,8 @@ async def execute_action(
     user: User = Depends(get_current_user),
     trace_id: str = Depends(get_trace_id),
     settings = Depends(get_settings),
+    background: bool = False,
+    webhook_url: str | None = None,
 ) -> ActResponse:
     """
     Execute agent workflow with policy-driven execution.
@@ -138,8 +142,12 @@ async def execute_action(
     2. Check idempotency key (Redis)
     3. Policy guard validation (scopes, autonomy level)
     4. Reflex router check (skip LLM for trivial goals)
-    5. LangGraph execution (sync < 30s, async > 30s)
+    5. LangGraph execution (sync) OR Queue for background processing (async)
     6. Store results, artifacts
+
+    **Execution Modes**:
+    - Synchronous (background=False): Execute immediately and return results
+    - Asynchronous (background=True): Queue job and return 202 Accepted with status URL
 
     **Autonomy Levels**:
     - L0_Ask: Return plan for approval
@@ -160,20 +168,16 @@ async def execute_action(
     Args:
         request_body: Action execution request
         request: FastAPI request object
-        actor: Authenticated actor (from JWT)
+        user: Authenticated user (from JWT)
         trace_id: OpenTelemetry trace ID
+        background: Execute in background (queue job)
+        webhook_url: Optional webhook URL for completion notifications
 
     Returns:
         ActResponse: Execution result (202 Accepted or 200 OK)
 
     Raises:
         HTTPException: 401 (unauthorized), 403 (policy violation), 409 (duplicate), 429 (rate limit)
-
-    TODO: Implement idempotency check (Redis)
-    TODO: Implement policy guard validation
-    TODO: Implement reflex router
-    TODO: Implement LangGraph execution
-    TODO: Implement async queuing for long-running tasks
     """
     # Extract actor from request body or user
     actor = request_body.actor or user.user_id
@@ -312,6 +316,60 @@ async def execute_action(
             results=None,
             artifacts=None,
             poll_url=f"/approvals/{run_id}/status",
+        )
+
+    # ========================================================================
+    # STEP 3.5: Background Execution (Queue Job)
+    # ========================================================================
+    if background:
+        from apps.core_api.deps import get_queue_producer
+
+        # Get queue producer
+        queue_producer = await get_queue_producer(
+            redis=await anext(get_redis()),
+            settings=Settings()
+        )
+
+        # Save run to database with "queued" status
+        postgres_store = get_postgres_store()
+        await postgres_store.save_run({
+            "id": run_id,
+            "actor": actor,
+            "request_payload": request_body.model_dump(),
+            "status": "queued",
+            "autonomy_level": autonomy_level,
+            "trace_id": trace_id,
+            "idempotency_key": request_body.idempotency_key,
+        })
+
+        # Enqueue job for background processing
+        job_id = await queue_producer.enqueue(
+            run_id=run_id,
+            goal=request_body.goal,
+            actor=actor,
+            autonomy_level=autonomy_level,
+            context=request_body.context,
+            max_steps=request_body.max_steps,
+            dry_run=request_body.dry_run,
+            webhook_url=webhook_url,
+        )
+
+        logger.info(
+            "job_queued",
+            run_id=run_id,
+            job_id=job_id,
+            actor=actor,
+            trace_id=trace_id,
+        )
+
+        # Return 202 Accepted with status URL
+        return ActResponse(
+            run_id=run_id,
+            trace_id=trace_id,
+            status="queued",
+            message="Job queued for background processing",
+            autonomy_level=autonomy_level,
+            poll_url=f"/runs/{run_id}/status",
         )
 
     # ========================================================================
