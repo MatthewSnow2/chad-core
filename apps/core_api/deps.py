@@ -13,7 +13,7 @@ Agent: api-scaffolding/backend-architect
 
 from typing import AsyncGenerator
 
-from fastapi import Depends, HTTPException, Header
+from fastapi import Depends, HTTPException, Header, status
 from opentelemetry import trace
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -129,22 +129,124 @@ async def get_queue() -> AsyncGenerator[Redis, None]:
     Yields:
         Redis: Redis client configured for stream operations
 
-    TODO: Implement queue-specific Redis connection
-    TODO: Add queue health check (stream exists, consumer group exists)
-    TODO: Add metrics for queue depth
-
     Example Usage:
         @app.post("/queue/task")
         async def enqueue_task(task: dict, queue: Redis = Depends(get_queue)):
             await queue.xadd(settings.REDIS_QUEUE_STREAM, task)
             return {"status": "queued"}
     """
-    # TODO: Use dedicated Redis connection for queue operations
-    # Can reuse get_redis() or create separate connection pool
+    # Reuse existing Redis connection for queue operations
+    async for redis in get_redis():
+        yield redis
 
-    # Placeholder
-    raise NotImplementedError("Queue dependency not yet implemented")
-    yield  # type: ignore
+
+# ============================================================================
+# QUEUE PRODUCER
+# ============================================================================
+
+
+class QueueProducer:
+    """Queue producer for enqueuing background jobs to Redis Streams."""
+
+    def __init__(self, redis_client: Redis, settings: Settings):
+        """Initialize queue producer.
+
+        Args:
+            redis_client: Redis client instance
+            settings: Application settings
+        """
+        self.redis = redis_client
+        self.settings = settings
+
+    async def enqueue(
+        self,
+        run_id: str,
+        goal: str,
+        actor: str,
+        autonomy_level: str,
+        context: dict | None = None,
+        max_steps: int = 10,
+        dry_run: bool = False,
+        webhook_url: str | None = None,
+    ) -> str:
+        """Enqueue a job to Redis Stream.
+
+        Args:
+            run_id: Run identifier
+            goal: Agent goal
+            actor: Actor identifier
+            autonomy_level: Autonomy level
+            context: Additional context
+            max_steps: Max execution steps
+            dry_run: Dry run mode
+            webhook_url: Optional webhook URL for notifications
+
+        Returns:
+            Job ID (message ID from XADD)
+        """
+        import json
+        from datetime import datetime
+
+        job_data = {
+            "run_id": run_id,
+            "goal": goal,
+            "actor": actor,
+            "autonomy_level": autonomy_level,
+            "context": json.dumps(context or {}),
+            "max_steps": str(max_steps),
+            "dry_run": str(dry_run),
+            "webhook_url": webhook_url or "",
+            "created_at": datetime.utcnow().isoformat(),
+            "retry_count": "0",
+        }
+
+        # Add to Redis Stream
+        job_id = await self.redis.xadd(
+            self.settings.QUEUE_STREAM_NAME,
+            job_data
+        )
+
+        return job_id
+
+    async def get_queue_depth(self) -> int:
+        """Get current queue depth.
+
+        Returns:
+            Number of pending jobs in stream
+        """
+        info = await self.redis.xinfo_stream(self.settings.QUEUE_STREAM_NAME)
+        return info.get("length", 0)
+
+
+async def get_queue_producer(
+    redis: Redis = Depends(get_redis),
+) -> QueueProducer:
+    """Dependency: Queue producer instance.
+
+    Args:
+        redis: Redis client
+
+    Returns:
+        QueueProducer instance
+
+    Raises:
+        HTTPException: 503 if Redis unavailable
+
+    Example Usage:
+        @app.post("/act")
+        async def act(
+            producer: QueueProducer = Depends(get_queue_producer)
+        ):
+            job_id = await producer.enqueue(...)
+            return {"job_id": job_id}
+    """
+    if redis is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Queue service unavailable"
+        )
+    # Use global settings instance
+    return QueueProducer(redis, settings)
 
 
 # ============================================================================

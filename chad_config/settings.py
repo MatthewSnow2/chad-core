@@ -63,6 +63,21 @@ class Settings(BaseSettings):
     REDIS_IDEMPOTENCY_TTL: int = Field(default=86400)
     REDIS_RATE_LIMIT_WINDOW: int = Field(default=60)
 
+    # Queue Worker Settings
+    QUEUE_STREAM_NAME: str = Field(default="chad:jobs", description="Redis stream name for jobs")
+    QUEUE_CONSUMER_GROUP: str = Field(default="chad-workers", description="Consumer group name")
+    QUEUE_CONSUMER_NAME: str = Field(default="worker-default", description="Consumer name (set to hostname in production)")
+    QUEUE_MAX_RETRIES: int = Field(default=3, description="Max retry attempts for failed jobs")
+    QUEUE_RETRY_DELAY_SECONDS: int = Field(default=60, description="Delay before retrying failed jobs")
+    QUEUE_DEAD_LETTER_STREAM: str = Field(default="chad:jobs:dlq", description="Dead letter queue stream")
+    QUEUE_POLL_INTERVAL_MS: int = Field(default=1000, description="Stream polling interval in milliseconds")
+    QUEUE_BLOCK_MS: int = Field(default=5000, description="Block time for XREADGROUP in milliseconds")
+
+    # Webhook Settings
+    WEBHOOK_TIMEOUT_SECONDS: int = Field(default=10, description="HTTP timeout for webhook calls")
+    WEBHOOK_MAX_RETRIES: int = Field(default=3, description="Max webhook delivery retries")
+    WEBHOOK_RETRY_BACKOFF_BASE: int = Field(default=2, description="Exponential backoff base for webhook retries")
+
     # ========================================================================
     # AUTH & SECURITY
     # ========================================================================
