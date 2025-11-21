@@ -81,27 +81,25 @@ services:
     startCommand: python -m apps.queue_worker.main
 
     envVars:
-      # Database (from Render Postgres)
+      # Database (link manually after creating database)
       - key: DATABASE_URL
-        fromDatabase:
-          name: chad-core-db
-          property: connectionString
+        sync: false  # Add manually from database connection string
 
-      # Redis (Upstash - manual entry)
+      # Redis (Upstash)
       - key: REDIS_URL
         sync: false
 
-      # LLM APIs (manual entry)
+      # LLM APIs
       - key: OPENAI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
 
-      # Notion (manual entry)
+      # Notion
       - key: NOTION_API_KEY
         sync: false
 
-      # Cloudflare R2 (manual entry)
+      # Cloudflare R2 (optional - skip for now)
       - key: R2_ACCOUNT_ID
         sync: false
       - key: R2_ACCESS_KEY_ID
@@ -111,11 +109,11 @@ services:
       - key: R2_BUCKET_NAME
         value: chad-core-artifacts
 
-      # Auth secrets (shared with API - must manually copy)
+      # Auth secrets (copy from API)
       - key: JWT_SECRET_KEY
-        sync: false  # Copy from API after first deploy
+        sync: false
       - key: HMAC_SECRET_KEY
-        sync: false  # Copy from API after first deploy
+        sync: false
 
       # Configuration
       - key: ENVIRONMENT
@@ -126,14 +124,12 @@ services:
 # ============================================================================
 # DATABASE (PostgreSQL + pgvector)
 # ============================================================================
-databases:
-  - name: chad-core-db
-    plan: standard  # $7/month (new pricing)
-    region: oregon
-    databaseName: chad_core
-    user: chad_core_user
-    postgresMajorVersion: 15
-
-    # Extensions (install manually via console)
-    # Run: CREATE EXTENSION IF NOT EXISTS vector;
-    ipAllowList: []  # Allow all IPs (or restrict to specific IPs)
+# Note: Create database manually via Render UI, then link to services
+# Render no longer supports database creation in render.yaml for new accounts
+# databases:
+#   - name: chad-core-db
+#     plan: starter-256mb
+#     region: oregon
+#     databaseName: chad_core
+#     user: chad_core_user
+#     postgresMajorVersion: 15
