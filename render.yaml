@@ -10,7 +10,7 @@ services:
     runtime: python
     plan: free  # Free tier (spins down after 15min)
     region: oregon  # Change to your preferred region
-    branch: main
+    branch: master
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn apps.core_api.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
@@ -76,7 +76,7 @@ services:
     runtime: python
     plan: free  # Free tier (always-on)
     region: oregon
-    branch: main
+    branch: master
     buildCommand: pip install -r requirements.txt
     startCommand: python -m apps.queue_worker.main
 
@@ -128,7 +128,7 @@ services:
 # ============================================================================
 databases:
   - name: chad-core-db
-    plan: starter  # $7/month, 256MB
+    plan: standard  # $7/month (new pricing)
     region: oregon
     databaseName: chad_core
     user: chad_core_user
