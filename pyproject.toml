@@ -1,227 +1,51 @@
 [project]
-name = "chad-core"
+name = "teletran1"
 version = "0.1.0"
-description = "Jarvis-inspired hybrid agentic service with LangGraph orchestration, policy-driven execution, and tool adapters"
-authors = [
-    {name = "Chad-Core Team", email = "team@chad-core.dev"}
-]
-requires-python = ">=3.11"
+description = "Project oversight system - recommends ONE project to focus on each week"
 readme = "README.md"
+requires-python = ">=3.11"
 license = {text = "MIT"}
+authors = [
+    {name = "Matthew Snow", email = "matthew@memyselfplusai.com"}
+]
+keywords = ["productivity", "project-management", "ai", "notion"]
 
 dependencies = [
-    # Core Framework
-    "fastapi>=0.109.0",
-    "uvicorn[standard]>=0.27.0",
-    "pydantic>=2.5.0",
-    "pydantic-settings>=2.1.0",
-
-    # Database (asyncpg ONLY - no psycopg2)
-    "sqlalchemy>=2.0.25",
-    "alembic>=1.13.1",
-    "asyncpg>=0.29.0",
-    "pgvector>=0.4.0",  # Vector extension support (0.4.1+ has HNSW)
-
-    # Redis
-    "redis>=5.0.1",
-
-    # Agent Orchestration
-    "langgraph>=0.0.20",
-    "langchain-core>=0.1.20",
-
-    # HTTP Client
-    "httpx>=0.26.0",
-
-    # Storage (Cloudflare R2, Supabase)
-    "boto3>=1.34.0",  # S3-compatible (for R2)
-    "supabase>=2.3.0",  # Legacy storage support
-
-    # Notion SDK
-    "notion-client>=2.2.1",
-
-    # LLM Provider (Claude-only)
-    "anthropic>=0.18.0",
-
-    # Observability (Minimal Instrumentation)
-    "opentelemetry-api>=1.22.0",
-    "opentelemetry-sdk>=1.22.0",
-    "opentelemetry-instrumentation-fastapi>=0.43b0",
-    "opentelemetry-instrumentation-httpx>=0.43b0",
-    "opentelemetry-instrumentation-sqlalchemy>=0.43b0",
-    "opentelemetry-instrumentation-redis>=0.43b0",
-    "opentelemetry-exporter-otlp>=1.22.0",
-    "prometheus-client>=0.19.0",
-    "structlog>=24.1.0",
-
-    # Auth (NO passlib - HMAC via hashlib)
-    "python-jose[cryptography]>=3.3.0",
-
-    # Utilities
-    "python-multipart>=0.0.6",
+    "anthropic>=0.40.0",
+    "notion-client>=2.2.0",
+    "typer>=0.15.0",
+    "rich>=13.9.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "httpx>=0.28.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
-langfuse = [
-    "langfuse>=2.0.0",  # Optional LLM observability
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
 ]
 
-dev = [
-    "pytest>=7.4.3",
-    "pytest-asyncio>=0.23.3",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.12.0",
-    "httpx>=0.26.0",  # Test client
-    "ruff>=0.1.13",
-    "black>=24.1.0",
-    "mypy>=1.8.0",
-    "pre-commit>=3.6.0",
-    "types-redis>=4.6.0",
-]
+[project.scripts]
+teletran1 = "teletran1.cli:app"
 
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=75.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apps*", "chad_*"]
+include = ["teletran1*"]
 
-# ============================================================================
-# PYTEST CONFIGURATION
-# ============================================================================
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
-addopts = [
-    "-v",
-    "--strict-markers",
-    "--cov=apps",
-    "--cov=chad_agents",
-    "--cov=chad_tools",
-    "--cov=chad_memory",
-    "--cov=chad_llm",
-    "--cov=chad_obs",
-    "--cov=chad_config",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-fail-under=70",
-]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-]
-
-# ============================================================================
-# RUFF CONFIGURATION (Linter + Formatter)
-# ============================================================================
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 
-select = [
-    "E",    # pycodestyle errors
-    "W",    # pycodestyle warnings
-    "F",    # pyflakes
-    "I",    # isort
-    "C90",  # mccabe complexity
-    "UP",   # pyupgrade
-    "B",    # flake8-bugbear
-    "S",    # flake8-bandit (security)
-    "T20",  # flake8-print
-]
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
 
-ignore = [
-    "E501",   # line too long (handled by black)
-    "B008",   # do not perform function calls in argument defaults
-    "S101",   # use of assert (OK in tests)
-    "T201",   # print found (OK for CLI tools)
-]
-
-[tool.ruff.per-file-ignores]
-"__init__.py" = ["F401"]  # Unused imports OK in __init__.py
-"tests/*" = ["S101", "B011"]  # Assert OK in tests
-
-[tool.ruff.mccabe]
-max-complexity = 10
-
-# ============================================================================
-# BLACK CONFIGURATION (Code Formatter)
-# ============================================================================
-[tool.black]
-line-length = 100
-target-version = ['py311']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-    \.git
-  | \.mypy_cache
-  | \.pytest_cache
-  | \.ruff_cache
-  | __pycache__
-  | build
-  | dist
-)/
-'''
-
-# ============================================================================
-# MYPY CONFIGURATION (Type Checker)
-# ============================================================================
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-strict_optional = true
-strict_equality = true
-
-# Pydantic plugin
-plugins = ["pydantic.mypy"]
-
-# Per-module overrides for third-party packages
-[[tool.mypy.overrides]]
-module = [
-    "langgraph.*",
-    "langchain_core.*",
-    "prometheus_client.*",
-    "structlog.*",
-    "openai.*",
-    "anthropic.*",
-]
-ignore_missing_imports = true
-
-# ============================================================================
-# COVERAGE CONFIGURATION
-# ============================================================================
-[tool.coverage.run]
-source = ["apps", "chad_agents", "chad_tools", "chad_memory", "chad_llm", "chad_obs", "chad_config"]
-omit = [
-    "*/tests/*",
-    "*/__pycache__/*",
-    "*/site-packages/*",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-    "class .*\\bProtocol\\):",
-    "@(abc\\.)?abstractmethod",
-]
-
-# ============================================================================
-# AGENT SIGN-OFF
-# ============================================================================
-# ✅ api-scaffolding/backend-architect
-# ✅ tdd-workflows/tdd-orchestrator
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

@@ -158,3 +158,4 @@ site/
 # ✅ deployment-strategies/deployment-engineer
 .claude/mcp.json
 venv/
+.venv/
