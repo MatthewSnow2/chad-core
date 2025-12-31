@@ -24,10 +24,10 @@ class NotionProjectClient:
         start_cursor = None
 
         while has_more:
-            response = self.client.databases.query(
-                database_id=self.database_id,
-                start_cursor=start_cursor,
-            )
+            kwargs = {"data_source_id": self.database_id}
+            if start_cursor:
+                kwargs["start_cursor"] = start_cursor
+            response = self.client.data_sources.query(**kwargs)
 
             for page in response["results"]:
                 project = self._parse_page(page)
